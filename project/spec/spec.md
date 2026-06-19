@@ -29,3 +29,4 @@ There I several milestones / versions I wish to achieve
 - the output video is automatically copied over to dagsHub storage
 - make sure no human in the loop is needed (e.g. for token authorization with manual link for DagsHub or similar)
 
+2
