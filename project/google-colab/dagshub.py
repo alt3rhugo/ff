@@ -79,19 +79,20 @@ get_ipython().system(f'''python facefusion.py headless-run \\
 
 assert os.path.exists(LOCAL_OUTPUT), f"Headless run produced no output at {LOCAL_OUTPUT}"
 
-# === CELL E: UPLOAD RESULT BACK TO DAGSHUB ===
-# Uses the DagsHub upload API (authenticated via DAGSHUB_USER_TOKEN). Verify the
-# argument names against the installed dagshub version; fall back to a mount copy
-# if dagshub.storage.mount turns out to be writable.
-from dagshub.upload import Repo
+# === CELL E: UPLOAD RESULT TO DAGSHUB STORAGE BUCKET (S3) ===
+# Writes the output into the SAME DagsHub Storage Bucket that CELL C reads the
+# input from -- not the Git/DVC repo. DagsHub buckets are S3-compatible; the
+# DagsHub token serves as both the access key and the secret key.
+get_ipython().run_line_magic('pip', 'install -q boto3')
+import boto3
 
-repo = Repo(REPO_OWNER, REPO_NAME)
-repo.upload(
-    local_path=LOCAL_OUTPUT,
-    remote_path=DAGSHUB_OUTPUT,
-    commit_message="Automated face fusion output",
+s3 = boto3.client(
+    "s3",
+    endpoint_url=f"https://dagshub.com/api/v1/repo-buckets/s3/{REPO_OWNER}",
+    aws_access_key_id=os.environ["DAGSHUB_USER_TOKEN"],
+    aws_secret_access_key=os.environ["DAGSHUB_USER_TOKEN"],
 )
-print(f"✓ Uploaded result -> dagshub://{REPO}/{DAGSHUB_OUTPUT}")
 
-# Fallback if the mount is writable instead:
-#   shutil.copy(LOCAL_OUTPUT, os.path.join(mount_path, DAGSHUB_OUTPUT))
+# Bucket name == repo name; key == the path inside the bucket.
+s3.upload_file(LOCAL_OUTPUT, REPO_NAME, DAGSHUB_OUTPUT)
+print(f"✓ Uploaded result -> s3://{REPO_NAME}/{DAGSHUB_OUTPUT} (DagsHub Storage Bucket)")
