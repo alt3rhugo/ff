@@ -1,0 +1,6 @@
+.env
+.secrets
+batch_config.json
+batch_in/
+batch_out/
+__pycache__/
