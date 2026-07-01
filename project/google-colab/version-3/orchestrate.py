@@ -169,7 +169,23 @@ def print_matrix(sources, targets, swapper_model):
 	print(f'\n{len(sources) * len(targets)} combination(s)\n')
 
 
+def clear_prefix(s3, prefix):
+	"""Delete every object under prefix; return how many were removed."""
+	removed = 0
+	for page in s3.get_paginator('list_objects_v2').paginate(Bucket=REPO_NAME, Prefix=prefix):
+		for obj in page.get('Contents', []):
+			s3.delete_object(Bucket=REPO_NAME, Key=obj['Key'])
+			removed += 1
+	return removed
+
+
 def upload_inputs(s3, sources, targets, override):
+	# Wipe the previous batch first so the bucket exactly mirrors the local input
+	# folder — otherwise stale sources/targets from an earlier run get reprocessed.
+	for prefix in (f'{INPUT_PREFIX}/sources/', f'{INPUT_PREFIX}/targets/', f'{OUTPUT_PREFIX}/'):
+		removed = clear_prefix(s3, prefix)
+		if removed:
+			print(f'  cleared {removed} stale object(s) under {prefix}', flush=True)
 	for source in sources:
 		s3.upload_file(str(source), REPO_NAME, f'{INPUT_PREFIX}/sources/{source.name}')
 	for target in targets:
