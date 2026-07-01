@@ -98,6 +98,17 @@ detected and the new one is joined with a hyphen:
 25-lnka-cc.0756-0838 ls65b.mp4  +  ls 33.jpg (1c)  ->  25-lnka-cc.0756-0838 ls65b-ls33c.mp4
 ```
 
+## Troubleshooting
+
+**A video comes out unswapped (or barely swapped).** Almost always the
+`occlusion` entry in `face_mask_types`. The XSeg occluder keeps whatever is *in
+front of* the face (hands, objects, fluid) unswapped — on clips where the face is
+covered throughout, that suppresses nearly the entire swap, so the result looks
+like the original. Fix: set `face_mask_types = box` in `override.ini`. Add
+`occlusion` back only for clips where the face is mostly clear and you want
+passing hands/objects to remain visible. (This is per-clip content, not a
+first-run or upload issue — the swap and source load fine.)
+
 ## Files
 
 | file | runs on | purpose |
