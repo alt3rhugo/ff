@@ -33,6 +33,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -248,12 +249,53 @@ def launch_remote_batch(s3, token, session, gpu):
 		colab('exec', '-s', session, '-f', str(HERE / '_launch.py'), retries=1)
 
 
-def wait_for_completion(s3):
+# Lines worth surfacing from the remote log: FaceFusion stages, tqdm bars, model
+# downloads, and our own per-combo headers / upload marks.
+_PROGRESS_RE = re.compile(
+	r'(analysing|extracting|processing|merging|restoring|downloading|frame/s|\d+%|===|\[FACEFUSION|✓)',
+	re.IGNORECASE)
+
+
+def _read_remote_log(session, remote='/content/batch.log'):
+	"""Best-effort download of the detached job's log; None if not available yet."""
+	try:
+		with tempfile.TemporaryDirectory() as tmp:
+			local = Path(tmp) / 'batch.log'
+			result = subprocess.run(['colab', 'download', '-s', session, remote, str(local)],
+									env=colab_env(), capture_output=True, text=True)
+			if result.returncode == 0 and local.exists():
+				return local.read_bytes().decode('utf-8', 'replace')
+	except Exception:
+		pass
+	return None
+
+
+def latest_progress(session):
+	"""Most recent meaningful progress line from the remote log (tqdm bars use \\r,
+	so split on both CR and LF and take the last interesting token)."""
+	text = _read_remote_log(session)
+	if text is None:
+		return None
+	lines = [p.strip() for p in re.split(r'[\r\n]+', text) if p.strip()]
+	for line in reversed(lines):
+		if _PROGRESS_RE.search(line):
+			return line[:120]
+	low = text.lower()  # setup phase has no stage lines — give a coarse hint
+	if 'collecting' in low or 'installing' in low or 'satisfied' in low:
+		return 'installing dependencies…'
+	if 'cloning' in low:
+		return 'cloning repository…'
+	return None
+
+
+def wait_for_completion(s3, session):
 	"""Poll the bucket until the remote writes a success/failure marker. Each poll
-	is an independent, retryable call — robust to transient network drops."""
+	is an independent, retryable call — robust to transient network drops. Between
+	checks it tails the remote log so real stage/percentage progress is shown."""
 	deadline = time.time() + POLL_TIMEOUT
 	print(f'polling s3://{REPO_NAME}/{OUTPUT_PREFIX}/ for completion '
 		  f'(every {POLL_INTERVAL}s, up to {POLL_TIMEOUT // 60} min)...', flush=True)
+	last_shown = None
 	while time.time() < deadline:
 		try:
 			failed = _get_marker(s3, FAILED_MARKER)
@@ -267,8 +309,11 @@ def wait_for_completion(s3):
 			raise
 		except Exception as exc:  # transient: keep polling
 			print(f'  (poll error, will retry): {exc}', flush=True)
+		progress = latest_progress(session) or '... still processing'
+		if progress != last_shown:
+			print(f'  {progress}', flush=True)
+			last_shown = progress
 		time.sleep(POLL_INTERVAL)
-		print('  ... still processing', flush=True)
 	raise TimeoutError(f'no completion marker after {POLL_TIMEOUT // 60} min')
 
 
@@ -311,7 +356,7 @@ def main():
 	upload_inputs(s3, sources, targets, override)
 	try:
 		launch_remote_batch(s3, token, args.session, args.gpu)
-		success = wait_for_completion(s3)
+		success = wait_for_completion(s3, args.session)
 		download_outputs(s3, success['outputs'], args.out)
 	finally:
 		stop_session(args.session)

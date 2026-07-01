@@ -15,7 +15,8 @@ LOCAL  orchestrate.py ──upload inputs──▶ DagsHub ──pull──▶ C
 The batch runs **detached** on the VM; the orchestrator **polls DagsHub** for a
 completion marker rather than holding a live connection for the whole job. A brief
 network blip just retries the next poll instead of killing the run, and the session
-is always reclaimed.
+is always reclaimed. While polling, it tails the remote log and prints the live
+FaceFusion stage/percentage (analysing → extracting → processing → merging).
 
 ## One-time setup
 
