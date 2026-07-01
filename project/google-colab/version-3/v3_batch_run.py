@@ -22,6 +22,7 @@ is never written to the repo.
 import configparser
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -117,21 +118,54 @@ def read_swapper_model(override_ini):
 	return model or DEFAULT_SWAPPER_MODEL
 
 
+def glob_safe_target(target):
+	"""FaceFusion names its temp frame dir after the target stem and then
+	globs it (temp_helper.get_temp_directory_path + resolve_file_pattern). A stem
+	containing glob metacharacters ([ ] * ?) — e.g. "10 [ai] wine ...mp4" — makes
+	glob treat "[ai]" as a character class, so the frames are never found and the
+	run dies with "temporary frames not found". Point -t at a metachar-free symlink
+	(copy fallback) so the temp dir name is glob-safe; the real name is preserved on
+	the -o output, which is written directly (never globbed)."""
+	if not re.search(r'[\[\]\*\?]', target.stem):
+		return target
+	safe_dir = INPUT_DIR / '_safe_targets'
+	safe_dir.mkdir(parents=True, exist_ok=True)
+	safe = safe_dir / (re.sub(r'[\[\]\*\?]', '_', target.stem) + target.suffix)
+	if not safe.exists():
+		try:
+			os.symlink(target, safe)
+		except (OSError, NotImplementedError):
+			import shutil
+			shutil.copy2(target, safe)
+	return safe
+
+
 def process(sources, targets, override_ini, swapper_model):
 	results = []
 	for target in targets:
+		safe_target = glob_safe_target(target)
 		for source in sources:
 			out_name = compose_output_name(target.name, source.name, swapper_model)
 			out_path = OUTPUT_DIR / out_name
 			print(f'\n=== {target.name}  x  {source.name}  ->  {out_name} ===', flush=True)
-			run([
+			cmd = [
 				sys.executable, 'facefusion.py', 'headless-run',
 				'--execution-providers', 'cuda',
 				'--config-path', str(override_ini),
 				'-s', str(source),
-				'-t', str(target),
+				'-t', str(safe_target),
 				'-o', str(out_path),
-			], cwd=FF_DIR)
+			]
+			print(f'+ {" ".join(str(c) for c in cmd)}', flush=True)
+			# Capture combined output so the failure marker can carry FaceFusion's
+			# real stderr (the detached batch.log dies with the session).
+			proc = subprocess.run(cmd, cwd=FF_DIR, text=True,
+								   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+			print(proc.stdout, flush=True)
+			if proc.returncode != 0:
+				tail = '\n'.join((proc.stdout or '').splitlines()[-40:])
+				raise RuntimeError(
+					f'headless-run exit {proc.returncode} for {out_name}\n{tail}')
 			if not out_path.exists():
 				raise RuntimeError(f'headless run produced no output at {out_path}')
 			results.append(out_path)
@@ -139,10 +173,15 @@ def process(sources, targets, override_ini, swapper_model):
 
 
 def upload_outputs(s3, cfg, results):
+	from boto3.s3.transfer import TransferConfig
+
+	# DagsHub's S3 endpoint returns 500 on CreateMultipartUpload; force a single
+	# PUT by lifting the multipart threshold above any plausible video size (5 GB).
+	single_part = TransferConfig(multipart_threshold=5 * 1024 ** 3)
 	output_prefix = cfg['output_prefix'].strip('/')  # e.g. "batch/output"
 	for path in results:
 		key = f'{output_prefix}/{path.name}'
-		s3.upload_file(str(path), cfg['repo_name'], key)
+		s3.upload_file(str(path), cfg['repo_name'], key, Config=single_part)
 		print(f'✓ uploaded -> s3://{cfg["repo_name"]}/{key}', flush=True)
 
 

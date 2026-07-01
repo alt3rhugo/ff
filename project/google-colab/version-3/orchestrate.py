@@ -187,11 +187,14 @@ def upload_inputs(s3, sources, targets, override):
 		removed = clear_prefix(s3, prefix)
 		if removed:
 			print(f'  cleared {removed} stale object(s) under {prefix}', flush=True)
+	from boto3.s3.transfer import TransferConfig
+	# DagsHub's S3 endpoint 500s on CreateMultipartUpload; force single-part PUTs.
+	single_part = TransferConfig(multipart_threshold=5 * 1024 ** 3)
 	for source in sources:
-		s3.upload_file(str(source), REPO_NAME, f'{INPUT_PREFIX}/sources/{source.name}')
+		s3.upload_file(str(source), REPO_NAME, f'{INPUT_PREFIX}/sources/{source.name}', Config=single_part)
 	for target in targets:
-		s3.upload_file(str(target), REPO_NAME, f'{INPUT_PREFIX}/targets/{target.name}')
-	s3.upload_file(str(override), REPO_NAME, f'{INPUT_PREFIX}/override.ini')
+		s3.upload_file(str(target), REPO_NAME, f'{INPUT_PREFIX}/targets/{target.name}', Config=single_part)
+	s3.upload_file(str(override), REPO_NAME, f'{INPUT_PREFIX}/override.ini', Config=single_part)
 	print(f'✓ uploaded {len(sources)} source(s) + {len(targets)} target(s) + override.ini to s3://{REPO_NAME}/{INPUT_PREFIX}/', flush=True)
 
 

@@ -1,6 +1,7 @@
 .env
 .secrets
 batch_config.json
-batch_in/
+batch_in/sources/
+batch_in/targets/
 batch_out/
 __pycache__/
